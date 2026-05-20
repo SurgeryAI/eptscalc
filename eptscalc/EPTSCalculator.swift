@@ -8,6 +8,7 @@ struct EPTSResult: Equatable {
 
     var riskTier: RiskTier {
         switch percentile {
+        case 0:       return .unknown
         case 1...20:  return .low
         case 21...50: return .moderate
         case 51...80: return .elevated
@@ -15,15 +16,31 @@ struct EPTSResult: Equatable {
         }
     }
 
-    enum RiskTier {
-        case low, moderate, elevated, high
+    /// Whether this candidate qualifies for KDPI ≤20% kidney priority (EPTS ≤ 20%).
+    var isTopTwentyPercent: Bool {
+        percentile > 0 && percentile <= 20
+    }
+
+    enum RiskTier: Equatable {
+        case unknown, low, moderate, elevated, high
 
         var label: String {
             switch self {
+            case .unknown:  return "Score Outside Reference Range"
             case .low:      return "Top 20% — Priority Candidate"
-            case .moderate: return "Moderate"
-            case .elevated: return "Elevated"
-            case .high:     return "High"
+            case .moderate: return "Moderate Expected Survival"
+            case .elevated: return "Elevated Risk"
+            case .high:     return "High Risk"
+            }
+        }
+
+        var systemImage: String {
+            switch self {
+            case .unknown:  return "questionmark.circle"
+            case .low:      return "checkmark.seal.fill"
+            case .moderate: return "circle.fill"
+            case .elevated: return "exclamationmark.triangle.fill"
+            case .high:     return "exclamationmark.octagon.fill"
             }
         }
     }
@@ -33,9 +50,16 @@ struct EPTSResult: Equatable {
 
 enum EPTSCalculator {
 
-    // Formula: OPTN Policy 8.4.B (2016). Coefficients verified unchanged through 2024.
-    // Percentile table: SRTR mapping derived from 2014 transplant cohort (published 2019).
-    // Verify table currency against current OPTN/SRTR data before clinical deployment.
+    /// Mapping table data provenance.
+    /// The percentile mapping is updated annually by OPTN/SRTR.
+    /// Current table: 2019 release (2014 transplant cohort).
+    /// Latest available: May 21, 2025 release (Dec 31, 2024 cohort).
+    /// Verify table currency at: https://optn.transplant.hrsa.gov/data/allocation-calculators/epts-calculator/
+    static let mappingTableYear = "2019"
+    static let mappingTableCohort = "2014"
+    static let latestAvailableYear = "2025"
+
+    // Formula: OPTN Policy 8.4.B (2016). Coefficients verified unchanged through 2025.
     static func calculate(
         age: Double,
         diabetes: Bool,
@@ -52,6 +76,10 @@ enum EPTSCalculator {
         priorTransplant: Bool,
         dialysisYears: Double
     ) -> Double {
+        // Use threshold comparison instead of exact == 0 to avoid
+        // floating-point fragility when dialysis years are computed from dates.
+        let notOnDialysis = dialysisYears < 0.0001
+
         var score = 0.047 * max(age - 25, 0)
                   + 0.315 * log(dialysisYears + 1)
 
@@ -59,7 +87,7 @@ enum EPTSCalculator {
             score += -0.015 * max(age - 25, 0)
                    + (-0.099) * log(dialysisYears + 1)
                    + 1.262
-            if dialysisYears == 0 {
+            if notOnDialysis {
                 score += -0.348
             }
         }
@@ -72,7 +100,7 @@ enum EPTSCalculator {
             score += -0.237
         }
 
-        if dialysisYears == 0 {
+        if notOnDialysis {
             score += 0.130
         }
 
@@ -87,7 +115,9 @@ enum EPTSCalculator {
     }
 
     // SRTR EPTS percentile mapping (2019 release, 2014 cohort).
-    // Source: OPTN/SRTR Annual Data Report. Verify against current SRTR tables.
+    // Source: OPTN/SRTR Annual Data Report.
+    // ⚠️ This table is updated annually by OPTN. Verify against current tables at:
+    // https://optn.transplant.hrsa.gov/data/allocation-calculators/epts-calculator/
     private static let percentileTable: [(Double, Double, Int)] = [
         (0.00257670148425817, 0.27600613860724200,  1),
         (0.27600613860724200, 0.43283228414272400,  2),

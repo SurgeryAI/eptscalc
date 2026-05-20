@@ -101,9 +101,9 @@ struct ContentView: View {
     // MARK: - Gauge Section
 
     private var gaugeSection: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 4) {
             if vm.showComparison {
-                HStack(spacing: 24) {
+                HStack(spacing: 16) {
                     gaugeView(result: vm.result, label: "Current")
                     gaugeView(result: vm.compResult, label: "What-If")
                 }
@@ -112,30 +112,29 @@ struct ContentView: View {
             }
 
             if vm.result.percentile > 0 {
-                HStack(spacing: 6) {
+                HStack(spacing: 5) {
                     Image(systemName: vm.result.riskTier.systemImage)
                         .foregroundStyle(tierColor(vm.result.riskTier))
-                        .font(.subheadline)
+                        .font(.caption)
                     Text(vm.result.riskTier.label)
-                        .font(.subheadline.weight(.medium))
+                        .font(.caption.weight(.medium))
                         .foregroundStyle(.secondary)
                 }
-                .padding(.top, 4)
                 .contentTransition(.identity)
                 .animation(.spring(duration: 0.3), value: vm.result.riskTier)
             }
         }
-        .glassCard()
+        .compactGlassCard()
     }
 
     private func gaugeView(result: EPTSResult, label: String?) -> some View {
-        VStack(spacing: 6) {
-            if let label { Text(label).font(.caption.weight(.semibold)).foregroundStyle(.secondary).textCase(.uppercase).tracking(0.5) }
+        VStack(spacing: 2) {
+            if let label { Text(label).font(.caption2.weight(.semibold)).foregroundStyle(.secondary).textCase(.uppercase).tracking(0.5) }
             Gauge(value: Double(result.percentile), in: 0...100) {
                 EmptyView()
             } currentValueLabel: {
                 Text(result.percentile > 0 ? "\(result.percentile)%" : "—")
-                    .font(.system(.title, design: .rounded, weight: .bold))
+                    .font(.system(.title3, design: .rounded, weight: .bold))
                     .foregroundStyle(percentileColor(result.percentile))
                     .contentTransition(.numericText())
                     .animation(.spring(duration: 0.25), value: result.percentile)
@@ -145,12 +144,12 @@ struct ContentView: View {
                 Text("100").font(.caption2).foregroundStyle(.secondary)
             }
             .gaugeStyle(.accessoryCircular)
-            .scaleEffect(1.8)
-            .frame(height: 100)
+            .scaleEffect(1.4)
+            .frame(height: 72)
             .tint(gaugeGradient(result.percentile))
 
             Text("Raw: \(String(format: "%.3f", result.rawScore))")
-                .font(.caption.weight(.medium).monospacedDigit())
+                .font(.caption2.weight(.medium).monospacedDigit())
                 .foregroundStyle(.tertiary)
         }
         .frame(maxWidth: .infinity)
@@ -394,9 +393,26 @@ struct GlassCardModifier: ViewModifier {
     }
 }
 
+struct CompactGlassCardModifier: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
+            .overlay(
+                RoundedRectangle(cornerRadius: 16)
+                    .strokeBorder(.white.opacity(0.15), lineWidth: 0.5)
+            )
+            .shadow(color: .black.opacity(0.06), radius: 8, y: 3)
+    }
+}
+
 extension View {
     func glassCard() -> some View {
         modifier(GlassCardModifier())
+    }
+    func compactGlassCard() -> some View {
+        modifier(CompactGlassCardModifier())
     }
 }
 

@@ -3,23 +3,38 @@ import SwiftUI
 // MARK: - ViewModel
 
 @Observable
+@MainActor
 final class EPTSViewModel {
-    var age: Double = 45
-    var hasDiabetes = false
-    var hadPriorTransplant = false
-    var isOnDialysis = false
-    var dialysisYears: Double = 1
+    var age: Double = 45 { didSet { recalculatePrimary() } }
+    var hasDiabetes = false { didSet { recalculatePrimary() } }
+    var hadPriorTransplant = false { didSet { recalculatePrimary() } }
+    var isOnDialysis = false { didSet { recalculatePrimary() } }
+    var dialysisYears: Double = 1 { didSet { recalculatePrimary() } }
 
     // Scenario comparison
     var showComparison = false
-    var compAge: Double = 45
-    var compDiabetes = false
-    var compPriorTransplant = false
-    var compOnDialysis = false
-    var compDialysisYears: Double = 1
+    var compAge: Double = 45 { didSet { recalculateComparison() } }
+    var compDiabetes = false { didSet { recalculateComparison() } }
+    var compPriorTransplant = false { didSet { recalculateComparison() } }
+    var compOnDialysis = false { didSet { recalculateComparison() } }
+    var compDialysisYears: Double = 1 { didSet { recalculateComparison() } }
 
-    var result: EPTSResult {
-        EPTSCalculator.calculate(
+    private(set) var result = EPTSCalculator.calculate(
+        age: 45,
+        diabetes: false,
+        priorTransplant: false,
+        dialysisYears: 0
+    )
+    private(set) var compResult = EPTSCalculator.calculate(
+        age: 45,
+        diabetes: false,
+        priorTransplant: false,
+        dialysisYears: 0
+    )
+    private var isSyncingComparison = false
+
+    private func recalculatePrimary() {
+        result = EPTSCalculator.calculate(
             age: age,
             diabetes: hasDiabetes,
             priorTransplant: hadPriorTransplant,
@@ -27,8 +42,9 @@ final class EPTSViewModel {
         )
     }
 
-    var compResult: EPTSResult {
-        EPTSCalculator.calculate(
+    private func recalculateComparison() {
+        guard !isSyncingComparison else { return }
+        compResult = EPTSCalculator.calculate(
             age: compAge,
             diabetes: compDiabetes,
             priorTransplant: compPriorTransplant,
@@ -37,20 +53,23 @@ final class EPTSViewModel {
     }
 
     func syncComparison() {
+        isSyncingComparison = true
         compAge = age
         compDiabetes = hasDiabetes
         compPriorTransplant = hadPriorTransplant
         compOnDialysis = isOnDialysis
         compDialysisYears = dialysisYears
+        isSyncingComparison = false
+        recalculateComparison()
     }
 }
 
 // MARK: - Content View
 
 struct ContentView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var vm = EPTSViewModel()
     @State private var showInfo = false
-    private let haptic = UIImpactFeedbackGenerator(style: .light)
 
     var body: some View {
         NavigationStack {
@@ -59,6 +78,7 @@ struct ContentView: View {
                     gaugeSection
                     kdpiBadge
                     inputCard
+                    timeMachineLink
                     if vm.showComparison { comparisonCard }
                     provenanceFooter
                 }
@@ -67,7 +87,7 @@ struct ContentView: View {
             .background(backgroundGradient)
             .navigationTitle("EPTS Calculator")
             .navigationBarTitleDisplayMode(.large)
-            .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
+            .toolbarBackground(Color(.systemGroupedBackground), for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { vm.showComparison.toggle(); if vm.showComparison { vm.syncComparison() } } label: {
@@ -84,18 +104,13 @@ struct ContentView: View {
                 }
             }
             .sheet(isPresented: $showInfo) { InfoSheet() }
-            .onChange(of: vm.result.percentile) { haptic.impactOccurred() }
         }
     }
 
     // MARK: - Background
 
     private var backgroundGradient: some View {
-        LinearGradient(
-            colors: [Color(.systemBackground), Color.teal.opacity(0.07), Color.indigo.opacity(0.05)],
-            startPoint: .top, endPoint: .bottom
-        )
-        .ignoresSafeArea()
+        Color(.systemGroupedBackground).ignoresSafeArea()
     }
 
     // MARK: - Gauge Section
@@ -111,17 +126,13 @@ struct ContentView: View {
                 gaugeView(result: vm.result, label: nil)
             }
 
-            if vm.result.percentile > 0 {
-                HStack(spacing: 5) {
-                    Image(systemName: vm.result.riskTier.systemImage)
-                        .foregroundStyle(tierColor(vm.result.riskTier))
-                        .font(.caption)
-                    Text(vm.result.riskTier.label)
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(.secondary)
-                }
-                .contentTransition(.identity)
-                .animation(.spring(duration: 0.3), value: vm.result.riskTier)
+            HStack(spacing: 5) {
+                Image(systemName: vm.result.riskTier.systemImage)
+                    .foregroundStyle(tierColor(vm.result.riskTier))
+                    .font(.caption)
+                Text(vm.result.riskTier.label)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
             }
         }
         .compactGlassCard()
@@ -133,11 +144,9 @@ struct ContentView: View {
             Gauge(value: Double(result.percentile), in: 0...100) {
                 EmptyView()
             } currentValueLabel: {
-                Text(result.percentile > 0 ? "\(result.percentile)%" : "—")
+                Text("\(result.percentile)%")
                     .font(.system(.title3, design: .rounded, weight: .bold))
                     .foregroundStyle(percentileColor(result.percentile))
-                    .contentTransition(.numericText())
-                    .animation(.spring(duration: 0.25), value: result.percentile)
             } minimumValueLabel: {
                 Text("0").font(.caption2).foregroundStyle(.secondary)
             } maximumValueLabel: {
@@ -167,11 +176,10 @@ struct ContentView: View {
             HStack(spacing: 8) {
                 Image(systemName: "checkmark.seal.fill")
                     .foregroundStyle(.green)
-                    .symbolEffect(.pulse, options: .repeating.speed(0.5))
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("KDPI ≤20% Eligible")
+                    Text("Top-20% EPTS Priority")
                         .font(.subheadline.weight(.bold))
-                    Text("Priority for highest-longevity donor kidneys")
+                    Text("Prioritized for KDPI ≤20% kidney offers")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -180,8 +188,7 @@ struct ContentView: View {
             .padding(14)
             .background(.green.opacity(0.1), in: RoundedRectangle(cornerRadius: 14))
             .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(.green.opacity(0.3), lineWidth: 1))
-            .transition(.asymmetric(insertion: .scale.combined(with: .opacity), removal: .opacity))
-            .animation(.spring(duration: 0.4), value: vm.result.isTopTwentyPercent)
+            .transition(.opacity)
         }
     }
 
@@ -210,7 +217,7 @@ struct ContentView: View {
                     .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
-        .animation(.spring(duration: 0.3), value: vm.isOnDialysis)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: vm.isOnDialysis)
         .glassCard()
     }
 
@@ -227,6 +234,8 @@ struct ContentView: View {
             }
             Slider(value: $vm.age, in: 18...100, step: 1)
                 .tint(.teal)
+                .accessibilityLabel("Patient age")
+                .accessibilityValue("\(Int(vm.age)) years")
         }
     }
 
@@ -243,6 +252,8 @@ struct ContentView: View {
             }
             Slider(value: $vm.dialysisYears, in: 0...30, step: 0.5)
                 .tint(.teal)
+                .accessibilityLabel("Years on dialysis")
+                .accessibilityValue(vm.dialysisYears.formatted(.number.precision(.fractionLength(1))) + " years")
         }
     }
 
@@ -253,6 +264,45 @@ struct ContentView: View {
         }
         .tint(.teal)
         .padding(.vertical, 4)
+    }
+
+    // MARK: - Time Machine
+
+    private var timeMachineLink: some View {
+        NavigationLink {
+            TimeMachineView(
+                age: vm.age,
+                diabetes: vm.hasDiabetes,
+                priorTransplant: vm.hadPriorTransplant,
+                dialysisYears: vm.isOnDialysis ? vm.dialysisYears : 0
+            )
+        } label: {
+            HStack(spacing: 14) {
+                Image(systemName: "clock.arrow.circlepath")
+                    .font(.title2)
+                    .foregroundStyle(.indigo)
+                    .frame(width: 38, height: 38)
+                    .background(.indigo.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("EPTS Time Machine")
+                        .font(.headline)
+                        .foregroundStyle(.primary)
+                    Text("Compare this raw score across 10 annual OPTN tables")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .buttonStyle(.plain)
+        .contentShape(Rectangle())
+        .accessibilityHint("Shows this candidate's percentile under each annual OPTN mapping table")
+        .glassCard()
     }
 
     // MARK: - Comparison Card
@@ -280,26 +330,22 @@ struct ContentView: View {
                     .transition(.opacity.combined(with: .move(edge: .top)))
             }
 
-            if vm.compResult.percentile > 0 && vm.result.percentile > 0 {
-                Divider().padding(.vertical, 8)
-                let diff = vm.compResult.percentile - vm.result.percentile
-                HStack(spacing: 6) {
-                    Image(systemName: diff > 0 ? "arrow.up.right" : diff < 0 ? "arrow.down.right" : "equal")
-                        .foregroundStyle(diff > 0 ? .red : diff < 0 ? .green : .secondary)
-                    Text(diff == 0 ? "No change" : "\(abs(diff))% \(diff > 0 ? "worse" : "better")")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(diff > 0 ? .red : diff < 0 ? .green : .secondary)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 8)
-                .background((diff > 0 ? Color.red : diff < 0 ? Color.green : Color.secondary).opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
-                .contentTransition(.numericText())
-                .animation(.spring(duration: 0.3), value: diff)
+            Divider().padding(.vertical, 8)
+            let diff = vm.compResult.percentile - vm.result.percentile
+            HStack(spacing: 6) {
+                Image(systemName: diff > 0 ? "arrow.up.right" : diff < 0 ? "arrow.down.right" : "equal")
+                    .foregroundStyle(diff > 0 ? .red : diff < 0 ? .green : .secondary)
+                Text(diff == 0 ? "No change" : "\(abs(diff))% \(diff > 0 ? "worse" : "better")")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(diff > 0 ? .red : diff < 0 ? .green : .secondary)
             }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 8)
+            .background((diff > 0 ? Color.red : diff < 0 ? Color.green : Color.secondary).opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
         }
-        .animation(.spring(duration: 0.3), value: vm.compOnDialysis)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: vm.compOnDialysis)
         .glassCard()
-        .transition(.asymmetric(insertion: .move(edge: .bottom).combined(with: .opacity), removal: .opacity))
+        .transition(reduceMotion ? .identity : .opacity)
     }
 
     private var compAgeRow: some View {
@@ -315,6 +361,8 @@ struct ContentView: View {
             }
             Slider(value: $vm.compAge, in: 18...100, step: 1)
                 .tint(.indigo)
+                .accessibilityLabel("Comparison patient age")
+                .accessibilityValue("\(Int(vm.compAge)) years")
         }
     }
 
@@ -331,6 +379,8 @@ struct ContentView: View {
             }
             Slider(value: $vm.compDialysisYears, in: 0...30, step: 0.5)
                 .tint(.indigo)
+                .accessibilityLabel("Comparison years on dialysis")
+                .accessibilityValue(vm.compDialysisYears.formatted(.number.precision(.fractionLength(1))) + " years")
         }
     }
 
@@ -342,11 +392,11 @@ struct ContentView: View {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .font(.caption2)
                     .foregroundStyle(.orange)
-                Text("Mapping table: \(EPTSCalculator.mappingTableYear) (\(EPTSCalculator.mappingTableCohort) cohort)")
+                Text("OPTN mapping: \(EPTSCalculator.mappingTableYear) publication (Dec. 31, \(EPTSCalculator.mappingTableCohort) reference)")
                     .font(.caption2.weight(.medium))
                     .foregroundStyle(.secondary)
             }
-            Text("OPTN updates this table annually. Verify against the current OPTN EPTS Calculator before clinical use.")
+            Text("Pinned from the current official table. Verify against HRSA/OPTN before clinical use.")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
                 .multilineTextAlignment(.center)
@@ -359,8 +409,7 @@ struct ContentView: View {
 
     private func percentileColor(_ percentile: Int) -> Color {
         switch percentile {
-        case 0:       return .secondary
-        case 1...20:  return .green
+        case 0...20:  return .green
         case 21...50: return .teal
         case 51...80: return .orange
         default:      return .red
@@ -378,18 +427,17 @@ struct ContentView: View {
     }
 }
 
-// MARK: - Glass Card Modifier
+// MARK: - Card Surface Modifiers
 
 struct GlassCardModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
             .padding(18)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18))
+            .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18))
             .overlay(
                 RoundedRectangle(cornerRadius: 18)
-                    .strokeBorder(.white.opacity(0.15), lineWidth: 0.5)
+                    .strokeBorder(Color(.separator).opacity(0.25), lineWidth: 0.5)
             )
-            .shadow(color: .black.opacity(0.06), radius: 12, y: 4)
     }
 }
 
@@ -398,12 +446,11 @@ struct CompactGlassCardModifier: ViewModifier {
         content
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
+            .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
             .overlay(
                 RoundedRectangle(cornerRadius: 16)
-                    .strokeBorder(.white.opacity(0.15), lineWidth: 0.5)
+                    .strokeBorder(Color(.separator).opacity(0.25), lineWidth: 0.5)
             )
-            .shadow(color: .black.opacity(0.06), radius: 8, y: 3)
     }
 }
 
@@ -484,9 +531,9 @@ struct InfoSheet: View {
             Label("References", systemImage: "book.closed.fill")
                 .font(.headline)
             VStack(alignment: .leading, spacing: 8) {
-                refItem("OPTN Policy 8.4.B — Allocation of Kidneys (2016, coefficients unchanged through 2025)")
-                refItem("SRTR EPTS Mapping Table — \(EPTSCalculator.mappingTableYear) release (\(EPTSCalculator.mappingTableCohort) cohort). Latest available: \(EPTSCalculator.latestAvailableYear).")
-                refItem("OPTN EPTS Calculator: optn.transplant.hrsa.gov/data/allocation-calculators/epts-calculator/")
+                refItem("OPTN Policy 8.4 — Allocation of Kidneys")
+                refItem("OPTN EPTS Mapping Table — \(EPTSCalculator.mappingTableYear) publication (December 31, \(EPTSCalculator.mappingTableCohort) reference population).")
+                refItem("HRSA EPTS Calculator: hrsa.gov/optn/data-calculators/allocation-calculators/epts-calculator")
             }
         }
     }
@@ -503,7 +550,7 @@ struct InfoSheet: View {
             Label("Disclaimer", systemImage: "exclamationmark.shield.fill")
                 .font(.headline)
                 .foregroundStyle(.orange)
-            Text("This calculator is for educational and clinical reference purposes only. It should not be used as the sole basis for clinical decision-making. The percentile mapping table may be outdated — always verify against the current OPTN/SRTR tables before clinical use. This tool is not affiliated with OPTN, UNOS, or SRTR.")
+            Text("This calculator is for educational and clinical reference purposes only. It should not be used as the sole basis for clinical decision-making. OPTN updates the mapping annually; always verify against the current official table before clinical use. This tool is not affiliated with HRSA, OPTN, UNOS, or SRTR.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

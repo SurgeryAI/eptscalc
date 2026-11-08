@@ -1,0 +1,83 @@
+name: Check OPTN EPTS mapping
+
+on:
+  schedule:
+    - cron: "17 15 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: check-optn-epts-mapping
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install PDF text extractor
+        run: sudo apt-get update && sudo apt-get install --yes poppler-utils
+
+      - name: Check and validate the current official table
+        id: mapping
+        run: |
+          python3 Scripts/check_for_epts_mapping_update.py \
+            --catalog Research/epts_mapping_tables.json \
+            --swift-output eptscalc/EPTSMappingTables.swift \
+            --allow-reader-fallback
+          python3 Scripts/generate_epts_mapping_data.py \
+            --catalog Research/epts_mapping_tables.json \
+            --output eptscalc/EPTSMappingTables.swift \
+            --check
+          swiftc \
+            eptscalc/EPTSMappingTables.swift \
+            eptscalc/EPTSCalculator.swift \
+            Scripts/verify_epts_logic.swift \
+            -o /tmp/verify-epts-logic
+          /tmp/verify-epts-logic
+          if git diff --quiet -- Research/epts_mapping_tables.json eptscalc/EPTSMappingTables.swift; then
+            echo "updated=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "updated=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open a review pull request
+        if: steps.mapping.outputs.updated == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          publication_year="$(python3 -c 'import json; print(json.load(open("Research/epts_mapping_tables.json"))["tables"][-1]["publicationYear"])')"
+          existing_pr="$(gh pr list \
+            --state open \
+            --search "Update OPTN EPTS mapping for ${publication_year} in:title" \
+            --json url \
+            --jq '.[0].url // empty')"
+          if [ -n "$existing_pr" ]; then
+            echo "An update pull request is already awaiting review: $existing_pr"
+            exit 0
+          fi
+          branch="automation/epts-mapping-${publication_year}-${GITHUB_RUN_ID}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git add Research/epts_mapping_tables.json eptscalc/EPTSMappingTables.swift
+          git commit -m "Update OPTN EPTS mapping for ${publication_year}"
+          git push origin "$branch"
+          gh pr create \
+            --base "$DEFAULT_BRANCH" \
+            --head "$branch" \
+            --title "Update OPTN EPTS mapping for ${publication_year}" \
+            --body "Automated candidate update from HRSA's current official EPTS PDF. The importer verified all percentile rows, continuous boundaries, chronological release order, and regenerated the pinned Swift data. Human review and app tests are required before merge."

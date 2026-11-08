@@ -476,6 +476,7 @@ struct InfoSheet: View {
                     allocationSection
                     referencesSection
                     disclaimerSection
+                    developerSection
                 }
                 .padding()
             }
@@ -557,6 +558,30 @@ struct InfoSheet: View {
         .padding(14)
         .background(.orange.opacity(0.06), in: RoundedRectangle(cornerRadius: 14))
         .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(.orange.opacity(0.2), lineWidth: 1))
+    }
+
+    private var developerSection: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "person.crop.circle.badge.checkmark")
+                .font(.title2)
+                .foregroundStyle(.teal)
+                .frame(width: 42, height: 42)
+                .background(.teal.opacity(0.1), in: Circle())
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Developed by")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text("Marc L. Melcher, MD")
+                    .font(.headline)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .glassCard()
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("This app was developed by Marc L. Melcher, M D")
     }
 }
 
